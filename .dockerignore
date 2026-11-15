@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+frontend
+docs
+*.md
+compose*.yaml
+bin
+coverage.out
+*.test
