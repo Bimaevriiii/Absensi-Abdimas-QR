@@ -168,6 +168,7 @@ func TestPostgresAPI(t *testing.T) {
 	if code, _, _ := call("POST", "/api/hadir", map[string]any{"action": "lookup", "token": token}, gateCookie); code != 200 {
 		t.Fatalf("lookup: %d", code)
 	}
+	s.now = func() time.Time { return time.Date(2026, 11, 15, 0, 11, 0, 0, time.UTC) }
 	var wg sync.WaitGroup
 	checkout := make(chan int, 2)
 	for i := 0; i < 2; i++ {

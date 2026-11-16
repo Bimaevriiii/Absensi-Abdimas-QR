@@ -128,9 +128,6 @@ func (s *Server) manualAction(w http.ResponseWriter, r *http.Request, actor User
 	}
 	reason := strings.TrimSpace(b.Reason)
 	note := strings.TrimSpace(b.Note)
-	if note == "" && absenceStatus(b.Status) {
-		note = reason
-	}
 	if !validAttendanceDay(day, today) || (actor.Role == "petugas" && day != today) || b.PersonID == "" || !validReason(reason) || len([]rune(note)) > 500 || (!absenceStatus(b.Status) && b.Status != "Hadir") {
 		writeJSON(w, 400, map[string]string{"error": "Periksa peserta, tanggal, status, dan alasan minimal 5 karakter."})
 		return
@@ -238,9 +235,6 @@ func (s *Server) correctAction(w http.ResponseWriter, r *http.Request, actor Use
 		after.Status = b.Status
 		after.Arrived, after.Departed = nil, nil
 		after.LateMinutes = 0
-		if after.Note == "" {
-			after.Note = reason
-		}
 	}
 	beforeJSON, _ := json.Marshal(before)
 	afterJSON, _ := json.Marshal(after)
@@ -274,7 +268,16 @@ func (s *Server) auditGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "ID catatan tidak valid."})
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT a.id,a.attendance_id,a.person_id,a.actor_user_id,u.name,a.action,a.before_data,a.after_data,a.reason,a.created_at FROM attendance_audit a JOIN users u ON u.id=a.actor_user_id WHERE ($1='' OR a.attendance_id=$1) ORDER BY a.created_at DESC,a.id DESC LIMIT 100`, recordID)
+	before := time.Now().Add(time.Hour)
+	if v := r.URL.Query().Get("before"); v != "" {
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": "Parameter before harus berformat RFC3339."})
+			return
+		}
+		before = t
+	}
+	rows, err := s.db.QueryContext(r.Context(), `SELECT a.id,a.attendance_id,a.person_id,a.actor_user_id,u.name,a.action,a.before_data,a.after_data,a.reason,a.created_at FROM attendance_audit a JOIN users u ON u.id=a.actor_user_id WHERE ($1='' OR a.attendance_id=$1) AND a.created_at < $2 ORDER BY a.created_at DESC,a.id DESC LIMIT 100`, recordID, before)
 	if err != nil {
 		s.fail(w, err)
 		return

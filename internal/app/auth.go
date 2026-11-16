@@ -10,9 +10,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/mail"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/argon2"
@@ -20,6 +22,73 @@ import (
 
 const cookieName = "hadir_session"
 const sessionTTL = 12 * time.Hour
+const maxPassword = 128
+const maxFails = 5    // per email
+const maxIPFails = 30 // per IP; higher because a whole school can share one NAT address
+const failWindow = 15 * time.Minute
+
+// dummyHash is verified when the email is unknown so response time doesn't reveal accounts.
+var dummyHash = sync.OnceValue(func() string { h, _ := passwordHash("dummy password for timing"); return h })
+
+type failure struct {
+	n     int
+	until time.Time
+}
+
+// ponytail: in-memory per-process limiter, resets on restart and isn't shared across instances; move to Postgres/Redis if scaled out.
+func (s *Server) blocked(key string, max int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f := s.fails[key]
+	return f.n >= max && s.now().Before(f.until)
+}
+
+func (s *Server) addFails(keys ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	if len(s.fails) > 10000 {
+		for k, f := range s.fails {
+			if now.After(f.until) {
+				delete(s.fails, k)
+			}
+		}
+	}
+	for _, k := range keys {
+		f := s.fails[k]
+		if now.After(f.until) {
+			f.n = 0
+		}
+		s.fails[k] = failure{f.n + 1, now.Add(failWindow)}
+	}
+}
+
+func (s *Server) clearFails(key string) {
+	s.mu.Lock()
+	delete(s.fails, key)
+	s.mu.Unlock()
+}
+
+func (s *Server) verify(hash, password string) bool {
+	s.hashSem <- struct{}{}
+	defer func() { <-s.hashSem }()
+	return verifyPassword(hash, password)
+}
+
+// clientIP trusts X-Forwarded-For only from a private/loopback peer, and takes the
+// rightmost non-private entry (the first entry is client-controlled with nginx's $proxy_add_x_forwarded_for).
+func (s *Server) clientIP(r *http.Request) string {
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip := net.ParseIP(host); ip != nil && (ip.IsPrivate() || ip.IsLoopback()) {
+		parts := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			if p := net.ParseIP(strings.TrimSpace(parts[i])); p != nil && !p.IsPrivate() && !p.IsLoopback() {
+				return p.String()
+			}
+		}
+	}
+	return host
+}
 
 func passwordHash(password string) (string, error) {
 	var salt [16]byte

@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Bimaevriiii/Absensi-Abdimas-QR-Go-PWA/internal/app"
@@ -48,7 +51,22 @@ func main() {
 		handler := app.NewServer(db, os.Getenv("COOKIE_SECURE") != "false")
 		server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 60 * time.Second}
 		log.Printf("Hadir API listening on %s", addr)
+		sig, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		finished := make(chan struct{})
+		go func() {
+			defer close(finished)
+			<-sig.Done()
+			shutdown, done := context.WithTimeout(context.Background(), 10*time.Second)
+			defer done()
+			if err := server.Shutdown(shutdown); err != nil {
+				log.Printf("shutdown: %v", err)
+			}
+		}()
 		err = server.ListenAndServe()
+		if err == http.ErrServerClosed {
+			<-finished
+		}
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -67,6 +85,9 @@ func databaseDSN() (string, error) {
 	name := os.Getenv("DB_NAME")
 	if host == "" || user == "" || password == "" || name == "" {
 		return "", fmt.Errorf("set DATABASE_URL or DB_HOST, DB_USER, DB_PASSWORD, and DB_NAME")
+	}
+	if strings.HasPrefix(password, "REPLACE_WITH") {
+		return "", fmt.Errorf("DB_PASSWORD is still the .env.example placeholder; set a real password (and reset the db volume if it was already initialised)")
 	}
 	port := os.Getenv("DB_PORT")
 	if port == "" {

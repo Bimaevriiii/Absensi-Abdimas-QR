@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Check, KeyRound, Plus, ShieldCheck, X } from 'lucide-react';
-import { apiFetch } from './api';
+import { apiJSON, idValidity, useDialog } from './api';
+import { roleLabel } from './attendance';
 
 type ManagedUser = { id: string; email: string; name: string; role: string; active: boolean };
 
@@ -11,11 +12,11 @@ export default function UserManagement({ currentUserId }: { currentUserId: strin
   const [message, setMessage] = useState('');
   const [resetUser, setResetUser] = useState<ManagedUser | null>(null);
 
+  const dialog = useDialog<HTMLFormElement>(Boolean(resetUser), () => setResetUser(null));
+
   const load = useCallback(async () => {
     try {
-      const response = await apiFetch('/api/users');
-      const body = await response.json();
-      if (!response.ok) throw Error(body.error || 'Gagal memuat akun.');
+      const body = await apiJSON('/api/users', undefined, 'Gagal memuat akun.');
       setUsers(body.users);
       setError('');
     } catch (cause) {
@@ -30,11 +31,9 @@ export default function UserManagement({ currentUserId }: { currentUserId: strin
     setError('');
     setMessage('');
     try {
-      const response = await apiFetch('/api/users', {
+      const result = await apiJSON('/api/users', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
-      const result = await response.json();
-      if (!response.ok) throw Error(result.error || 'Permintaan gagal.');
       setMessage(result.message || 'Akun berhasil dibuat.');
       await load();
       return true;
@@ -76,28 +75,29 @@ export default function UserManagement({ currentUserId }: { currentUserId: strin
     {message && <p className="account-success" role="status">{message}</p>}
     <div className="table-scroll"><table><thead><tr><th>Nama</th><th>Email</th><th>Peran</th><th>Status</th><th>Tindakan</th></tr></thead><tbody>
       {users.map(user => <tr key={user.id}>
-        <td><strong>{user.name}</strong></td><td>{user.email}</td><td>{user.role}</td>
+        <td><strong>{user.name}</strong></td><td>{user.email}</td><td>{user.active && user.id !== currentUserId ? <select aria-label={'Peran '+user.name} value={user.role} disabled={busy} onChange={event => void action({ action: 'setRole', id: user.id, role: event.target.value })}><option value="petugas">Petugas gerbang</option><option value="operator">Operator</option><option value="pengelola">Pengelola</option></select> : roleLabel(user.role)}</td>
         <td><span className={'badge '+(user.active?'':'neutral')}>{user.active?'Aktif':'Nonaktif'}</span></td>
         <td><div className="account-actions">
           {user.active && <button className="text-btn" disabled={busy} onClick={() => setResetUser(user)}><KeyRound size={15}/>Reset sandi</button>}
+          {!user.active && <button className="text-btn" disabled={busy} onClick={() => void action({ action: 'activate', id: user.id })}>Aktifkan</button>}
           {user.active && user.id !== currentUserId && <button className="text-btn danger" disabled={busy} onClick={() => deactivate(user)}>Nonaktifkan</button>}
         </div></td>
       </tr>)}
     </tbody></table></div>
-    <form className="account-form" onSubmit={create}>
+    <form className="account-form" onSubmit={create} {...idValidity}>
       <h3>Tambah akun</h3>
       <div className="account-fields">
         <label>Nama<input name="name" maxLength={100} required /></label>
         <label>Email<input name="email" type="email" autoComplete="off" required /></label>
         <label>Peran<select name="role" defaultValue="petugas"><option value="petugas">Petugas gerbang</option><option value="operator">Operator</option><option value="pengelola">Pengelola</option></select></label>
-        <label>Kata sandi awal<input name="password" type="password" minLength={12} autoComplete="new-password" required /></label>
+        <label>Kata sandi awal (minimal 12 karakter)<input name="password" type="password" minLength={12} autoComplete="new-password" required /></label>
       </div>
       <button className="btn" disabled={busy}><Plus size={16}/>{busy?'Menyimpan…':'Tambah akun'}</button>
     </form>
     {resetUser && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setResetUser(null); }}>
-      <form className="modal" onSubmit={reset}>
+      <form className="modal" ref={dialog} role="dialog" aria-modal="true" aria-label="Reset kata sandi" onSubmit={reset} {...idValidity}>
         <div className="modal-head"><div><h2>Reset kata sandi</h2><p>{resetUser.name} · {resetUser.email}</p></div><button className="icon-btn" type="button" aria-label="Tutup" onClick={() => setResetUser(null)}><X size={20}/></button></div>
-        <label>Kata sandi baru<input name="password" type="password" minLength={12} autoComplete="new-password" required /></label>
+        <label>Kata sandi baru (minimal 12 karakter)<input name="password" type="password" minLength={12} autoComplete="new-password" required /></label>
         <p className="field-note">Minimal 12 karakter. Semua sesi lama akun ini akan berakhir.</p>
         <div className="modal-actions"><button className="btn secondary" type="button" onClick={() => setResetUser(null)}>Batal</button><button className="btn" disabled={busy}><Check size={16}/>Simpan sandi</button></div>
       </form>

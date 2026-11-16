@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowRight, LockKeyhole, QrCode, ShieldCheck } from 'lucide-react';
 import Dashboard from './Dashboard';
-import { apiFetch } from './api';
+import { apiJSON, idValidity } from './api';
 
 export type Account = { id: string; email: string; name: string; role: 'pengelola' | 'operator' | 'petugas' };
 
@@ -15,15 +15,10 @@ export default function AuthGate() {
 
   useEffect(() => {
     let alive = true;
-    apiFetch('/api/auth/me')
-      .then(async response => {
-        if (response.status === 401) return null;
-        const body = await response.json();
-        if (!response.ok) throw Error(body.error || 'Tidak dapat memeriksa sesi.');
-        return body.user as Account;
-      })
+    apiJSON('/api/auth/me', undefined, 'Tidak dapat memeriksa sesi.')
+      .then(body => body.user as Account)
       .then(account => { if (alive) setUser(account); })
-      .catch((cause: Error) => { if (alive) setError(cause.message || 'Server tidak dapat dihubungi.'); })
+      .catch((cause: Error & { status?: number }) => { if (alive && cause.status !== 401) setError(cause.message || 'Server tidak dapat dihubungi.'); })
       .finally(() => { if (alive) setChecking(false); });
     return () => { alive = false; };
   }, []);
@@ -39,13 +34,11 @@ export default function AuthGate() {
     setBusy(true);
     setError('');
     try {
-      const response = await apiFetch('/api/auth/login', {
+      const body = await apiJSON('/api/auth/login', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw Error(body.error || 'Gagal masuk.');
+      }, 'Gagal masuk.');
       setPassword('');
       setUser(body.user as Account);
     } catch (cause) {
@@ -58,9 +51,8 @@ export default function AuthGate() {
   async function logout() {
     setBusy(true);
     try {
-      const response = await apiFetch('/api/auth/logout', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      if (!response.ok) throw Error('Gagal keluar. Coba lagi.');
+      await apiJSON('/api/auth/logout', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }, 'Gagal keluar. Coba lagi.');
       setUser(null);
       setError('');
     } catch (cause) {
@@ -78,7 +70,7 @@ export default function AuthGate() {
     <div className="auth-eyebrow"><ShieldCheck size={16}/> RUANG KERJA SEKOLAH</div>
     <h1>Selamat datang kembali.</h1>
     <p>Masuk untuk mengelola dan mencatat kehadiran murid serta guru.</p>
-    <form onSubmit={login}>
+    <form onSubmit={login} {...idValidity}>
       <label>Email akun<input autoComplete="username" type="email" value={email} onChange={event => setEmail(event.target.value)} required /></label>
       <label>Kata sandi<input autoComplete="current-password" type="password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
       {error && <div className="auth-error" role="alert">{error}</div>}

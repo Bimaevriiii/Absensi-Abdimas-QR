@@ -1,5 +1,6 @@
 export type Person = { id: string; token: string; name: string; number: string; role: string; group_name: string; active: number; demo: number };
 export type RecordItem = { id: string; person_id: string; day: string; arrived: string | null; departed: string | null; status: string; late_minutes: number; note: string; source: string };
+export const roleLabel = (r: string) => ({ pengelola: 'Pengelola', operator: 'Operator', petugas: 'Petugas gerbang', murid: 'Murid', guru: 'Guru' } as Record<string, string>)[r] || r;
 export type SchoolSettings = { school: string; student_time: string; teacher_time: string; student_departure_time: string; teacher_departure_time: string; timezone: string };
 
 const offsets: Record<string, string> = {

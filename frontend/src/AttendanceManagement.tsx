@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Check, ClipboardCheck, History } from 'lucide-react';
-import { apiFetch } from './api';
+import { apiJSON, idValidity } from './api';
 import { isoToSchoolInput, schoolInputToISO, schoolTime, type Person, type RecordItem, type SchoolSettings } from './attendance';
 
 type AuditEntry = {
@@ -36,12 +36,18 @@ export default function AttendanceManagement({ people, records, settings, today,
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
+  const dirty = useRef(false);
+  const lastID = useRef('');
+  const banner = useRef<HTMLDivElement>(null);
+  const edit = (set: (v: string) => void) => (event: { target: { value: string } }) => { dirty.current = true; set(event.target.value); };
   const visibleRecords = useMemo(() => records.filter(record => record.day >= from && record.day <= to), [records, from, to]);
   const selected = records.find(record => record.id === selectedID);
   const personName = (id: string) => people.find(person => person.id === id)?.name || 'Peserta tidak tersedia';
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || (lastID.current === selected.id && dirty.current)) return; // keep half-typed edits across polls
+    lastID.current = selected.id;
+    dirty.current = false;
     setCorrectStatus(selected.arrived ? 'Hadir' : selected.status);
     setCorrectArrived(isoToSchoolInput(selected.arrived, settings.timezone));
     setCorrectDeparted(isoToSchoolInput(selected.departed, settings.timezone));
@@ -53,15 +59,14 @@ export default function AttendanceManagement({ people, records, settings, today,
     if (!admin) return;
     try {
       const query = selectedID ? `?attendance_id=${encodeURIComponent(selectedID)}` : '';
-      const response = await apiFetch('/api/audit' + query);
-      const body = await response.json();
-      if (!response.ok) throw Error(body.error || 'Riwayat tidak dapat dimuat.');
+      const body = await apiJSON('/api/audit' + query, undefined, 'Riwayat tidak dapat dimuat.');
       setAudit(body.audit);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Riwayat tidak dapat dimuat.');
     }
   }, [admin, selectedID]);
 
+  useEffect(() => { if (message || error) banner.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [message, error]);
   useEffect(() => { void loadAudit(); }, [loadAudit]);
 
   async function send(body: Record<string, string>) {
@@ -69,9 +74,7 @@ export default function AttendanceManagement({ people, records, settings, today,
     setError('');
     setMessage('');
     try {
-      const response = await apiFetch('/api/hadir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const result = await response.json();
-      if (!response.ok) throw Error(result.error || 'Catatan gagal disimpan.');
+      const result = await apiJSON('/api/hadir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 'Catatan gagal disimpan.');
       setMessage(result.message);
       await onSaved();
       await loadAudit();
@@ -92,7 +95,7 @@ export default function AttendanceManagement({ people, records, settings, today,
         body.arrived = schoolInputToISO(manualArrived, settings.timezone);
         if (manualDeparted) body.departed = schoolInputToISO(manualDeparted, settings.timezone);
       }
-      if (await send(body)) { setManualReason(''); setManualNote(''); }
+      if (await send(body)) { setManualReason(''); setManualNote(''); setPersonID(''); }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Waktu tidak valid.');
     }
@@ -107,6 +110,7 @@ export default function AttendanceManagement({ people, records, settings, today,
         body.arrived = schoolInputToISO(correctArrived, settings.timezone);
         if (correctDeparted) body.departed = schoolInputToISO(correctDeparted, settings.timezone);
       }
+      dirty.current = false;
       if (await send(body)) setCorrectReason('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Waktu tidak valid.');
@@ -115,10 +119,12 @@ export default function AttendanceManagement({ people, records, settings, today,
 
   return <section className="panel manual-panel report-management">
     <div className="section-head"><div><h2>Catatan manual dan koreksi</h2><p>Izin, sakit, dan alpa diinput petugas. Koreksi catatan dilakukan pengelola dengan alasan.</p></div><ClipboardCheck size={22}/></div>
-    {error && <p className="account-error" role="alert">{error}</p>}
-    {message && <p className="account-success" role="status">{message}</p>}
+    <div ref={banner}>
+      {error && <p className="account-error" role="alert">{error}</p>}
+      {message && <p className="account-success" role="status">{message}</p>}
+    </div>
     <div className="management-grid">
-      <form className="management-form" onSubmit={addManual}>
+      <form className="management-form" onSubmit={addManual} {...idValidity}>
         <h3>Tambah catatan manual</h3>
         <label>Peserta<select value={personID} onChange={event => setPersonID(event.target.value)} required><option value="">Pilih murid/guru</option>{people.filter(person => person.active).map(person => <option key={person.id} value={person.id}>{person.name} · {person.number}</option>)}</select></label>
         <div className="form-two"><label>Tanggal sekolah<input type="date" min="2000-01-01" max={today} value={day} onChange={event => { const nextDay = event.target.value; setDay(nextDay); setManualArrived(`${nextDay}T07:00`); setManualDeparted(''); }} required /></label><label>Status<select value={manualStatus} onChange={event => setManualStatus(event.target.value)}><option>Izin</option><option>Sakit</option><option>Alpa</option>{admin && <option value="Hadir">Hadir terlewat</option>}</select></label></div>
@@ -130,11 +136,11 @@ export default function AttendanceManagement({ people, records, settings, today,
       {admin && <div className="management-form">
         <h3>Koreksi catatan</h3>
         <label>Catatan pada periode rekap<select value={selectedID} onChange={event => setSelectedID(event.target.value)}><option value="">Pilih catatan</option>{visibleRecords.map(record => <option key={record.id} value={record.id}>{record.day} · {personName(record.person_id)} · {record.status}</option>)}</select></label>
-        {selected ? <form className="correction-form" onSubmit={correct}>
-          <div className="form-two"><label>Status baru<select value={correctStatus} onChange={event => setCorrectStatus(event.target.value)}><option value="Hadir">Hadir</option><option>Izin</option><option>Sakit</option><option>Alpa</option></select></label><label>Tanggal sekolah<input value={selected.day} disabled /></label></div>
-          {correctStatus === 'Hadir' && <div className="form-two"><label>Masuk ({settings.timezone})<input type="datetime-local" value={correctArrived} onChange={event => setCorrectArrived(event.target.value)} required /></label><label>Pulang ({settings.timezone})<input type="datetime-local" value={correctDeparted} onChange={event => setCorrectDeparted(event.target.value)} /></label></div>}
-          <label>Keterangan catatan<textarea value={correctNote} onChange={event => setCorrectNote(event.target.value)} maxLength={500} /></label>
-          <label>Alasan koreksi<textarea value={correctReason} onChange={event => setCorrectReason(event.target.value)} minLength={5} maxLength={500} required placeholder="Jelaskan dasar perubahan" /></label>
+        {selected ? <form className="correction-form" onSubmit={correct} {...idValidity}>
+          <div className="form-two"><label>Status baru<select value={correctStatus} onChange={edit(setCorrectStatus)}><option value="Hadir">{selected.arrived ? `Hadir (saat ini ${selected.status})` : 'Hadir'}</option><option>Izin</option><option>Sakit</option><option>Alpa</option></select></label><label>Tanggal sekolah<input value={selected.day} disabled /></label></div>
+          {correctStatus === 'Hadir' && <div className="form-two"><label>Masuk ({settings.timezone})<input type="datetime-local" value={correctArrived} onChange={edit(setCorrectArrived)} required /></label><label>Pulang ({settings.timezone})<input type="datetime-local" value={correctDeparted} onChange={edit(setCorrectDeparted)} /></label></div>}
+          <label>Keterangan catatan<textarea value={correctNote} onChange={edit(setCorrectNote)} maxLength={500} /></label>
+          <label>Alasan koreksi<textarea value={correctReason} onChange={edit(setCorrectReason)} minLength={5} maxLength={500} required placeholder="Jelaskan dasar perubahan" /></label>
           <button className="btn" disabled={busy}><Check size={16}/>Simpan koreksi</button>
         </form> : <p className="field-note">Pilih catatan yang sudah ada dari periode rekap di atas. Tanggal catatan tetap; waktu dan status dapat dikoreksi.</p>}
       </div>}

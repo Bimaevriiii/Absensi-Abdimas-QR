@@ -11,6 +11,7 @@ import (
 	"net/mail"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -20,10 +21,13 @@ type Server struct {
 	db           *sql.DB
 	cookieSecure bool
 	now          func() time.Time
+	mu           sync.Mutex
+	fails        map[string]failure // login failures keyed by "ip:..." and "email:..."
+	hashSem      chan struct{}      // bounds concurrent 64MB argon2 runs
 }
 
 func NewServer(db *sql.DB, cookieSecure bool) *Server {
-	return &Server{db: db, cookieSecure: cookieSecure, now: time.Now}
+	return &Server{db: db, cookieSecure: cookieSecure, now: time.Now, fails: map[string]failure{}, hashSem: make(chan struct{}, 4)}
 }
 
 func (s *Server) Handler() http.Handler { return s }
@@ -149,16 +153,34 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(b.Email))
+	if len(b.Password) > maxPassword || len(email) > 254 {
+		writeJSON(w, 400, map[string]string{"error": "Periksa email dan kata sandi."})
+		return
+	}
+	ipKey, emailKey := "ip:"+s.clientIP(r), "email:"+email
+	if s.blocked(ipKey, maxIPFails) || s.blocked(emailKey, maxFails) {
+		writeJSON(w, 429, map[string]string{"error": "Terlalu banyak percobaan. Coba lagi nanti."})
+		return
+	}
 	var u User
 	var hash string
 	err := s.db.QueryRowContext(r.Context(), `SELECT id,email,name,role,password_hash FROM users WHERE email=$1 AND active=true`, email).Scan(&u.ID, &u.Email, &u.Name, &u.Role, &hash)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !verifyPassword(hash, b.Password)) {
-		writeJSON(w, 401, map[string]string{"error": "Email atau kata sandi tidak sesuai."})
-		return
+	if errors.Is(err, sql.ErrNoRows) {
+		hash, err = dummyHash(), nil // equalize timing with the known-user path
+		u = User{}
 	}
 	if err != nil {
 		s.fail(w, err)
 		return
+	}
+	if !s.verify(hash, b.Password) || u.ID == "" {
+		s.addFails(ipKey, emailKey)
+		writeJSON(w, 401, map[string]string{"error": "Email atau kata sandi tidak sesuai."})
+		return
+	}
+	s.clearFails(emailKey)
+	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM sessions WHERE expires_at<$1`, s.now()); err != nil {
+		log.Printf("session purge: %v", err)
 	}
 	token, err := newSecret()
 	if err != nil {
@@ -202,7 +224,7 @@ type userBody struct {
 }
 
 func (s *Server) users(w http.ResponseWriter, r *http.Request) {
-	_, ok := s.requireUser(w, r, "pengelola")
+	actor, ok := s.requireUser(w, r, "pengelola")
 	if !ok {
 		return
 	}
@@ -240,8 +262,8 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 		email := strings.ToLower(strings.TrimSpace(b.Email))
 		name := strings.TrimSpace(b.Name)
 		address, parseErr := mail.ParseAddress(email)
-		if parseErr != nil || address.Address != email || len(email) > 254 || name == "" || len(name) > 100 || len(b.Password) < 12 || (b.Role != "pengelola" && b.Role != "operator" && b.Role != "petugas") {
-			writeJSON(w, 400, map[string]string{"error": "Periksa email, nama, peran, dan kata sandi minimal 12 karakter."})
+		if parseErr != nil || address.Address != email || len(email) > 254 || name == "" || len(name) > 100 || len(b.Password) < 12 || len(b.Password) > maxPassword || (b.Role != "pengelola" && b.Role != "operator" && b.Role != "petugas") {
+			writeJSON(w, 400, map[string]string{"error": "Periksa email, nama, peran, dan kata sandi minimal 12 dan maksimal 128 karakter."})
 			return
 		}
 		id, err := newID()
@@ -263,32 +285,43 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err)
 			return
 		}
+		log.Printf("audit: %s created user %s role=%s", actor.Email, email, b.Role)
 		writeJSON(w, 201, map[string]any{"user": User{ID: id, Email: email, Name: name, Role: b.Role}})
 	case "deactivate":
-		current, _ := s.sessionUser(r.Context(), r)
-		if b.ID == "" || b.ID == current.ID {
+		if b.ID == "" || b.ID == actor.ID {
 			writeJSON(w, 400, map[string]string{"error": "Pilih akun lain yang akan dinonaktifkan."})
 			return
 		}
-		res, err := s.db.ExecContext(r.Context(), `UPDATE users SET active=false WHERE id=$1 AND active=true`, b.ID)
-		if err != nil {
+		if !s.setUser(w, r, b.ID, true, `UPDATE users SET active=false WHERE id=$1`) {
+			return
+		}
+		if _, err := s.db.ExecContext(r.Context(), `DELETE FROM sessions WHERE user_id=$1`, b.ID); err != nil {
 			s.fail(w, err)
 			return
 		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			writeJSON(w, 404, map[string]string{"error": "Akun tidak ditemukan."})
-			return
-		}
-		_, err = s.db.ExecContext(r.Context(), `DELETE FROM sessions WHERE user_id=$1`, b.ID)
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
+		log.Printf("audit: %s deactivated user %s", actor.Email, b.ID)
 		writeJSON(w, 200, map[string]string{"message": "Akun dinonaktifkan."})
+	case "activate":
+		if b.ID != "" && s.setUser(w, r, b.ID, false, `UPDATE users SET active=true WHERE id=$1`) {
+			log.Printf("audit: %s activated user %s", actor.Email, b.ID)
+			writeJSON(w, 200, map[string]string{"message": "Akun diaktifkan."})
+		} else if b.ID == "" {
+			writeJSON(w, 400, map[string]string{"error": "ID akun diperlukan."})
+		}
+	case "setRole":
+		if b.Role != "pengelola" && b.Role != "operator" && b.Role != "petugas" {
+			writeJSON(w, 400, map[string]string{"error": "Peran tidak valid."})
+			return
+		}
+		if b.ID != "" && s.setUser(w, r, b.ID, b.Role != "pengelola", `UPDATE users SET role=$2 WHERE id=$1`, b.Role) {
+			log.Printf("audit: %s set role of user %s to %s", actor.Email, b.ID, b.Role)
+			writeJSON(w, 200, map[string]string{"message": "Peran diperbarui."})
+		} else if b.ID == "" {
+			writeJSON(w, 400, map[string]string{"error": "ID akun diperlukan."})
+		}
 	case "resetPassword":
-		if b.ID == "" || len(b.Password) < 12 {
-			writeJSON(w, 400, map[string]string{"error": "ID dan kata sandi minimal 12 karakter diperlukan."})
+		if b.ID == "" || len(b.Password) < 12 || len(b.Password) > maxPassword {
+			writeJSON(w, 400, map[string]string{"error": "ID dan kata sandi 12-128 karakter diperlukan."})
 			return
 		}
 		hash, err := passwordHash(b.Password)
@@ -311,6 +344,7 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err)
 			return
 		}
+		log.Printf("audit: %s reset password of user %s", actor.Email, b.ID)
 		writeJSON(w, 200, map[string]string{"message": "Kata sandi diperbarui; sesi lama berakhir."})
 	default:
 		writeJSON(w, 400, map[string]string{"error": "Tindakan tidak dikenal."})
@@ -320,4 +354,43 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 func uniqueViolation(err error) bool {
 	var p *pgconn.PgError
 	return errors.As(err, &p) && p.Code == "23505"
+}
+
+// setUser runs update (args: id, extra...) in a tx serialized by an advisory lock.
+// If demote, it refuses (409) to remove the last active pengelola. Writes the error response and returns false on failure.
+func (s *Server) setUser(w http.ResponseWriter, r *http.Request, id string, demote bool, update string, extra ...any) bool {
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		s.fail(w, err)
+		return false
+	}
+	defer tx.Rollback()
+	var role string
+	var active bool
+	var n int
+	if _, err = tx.ExecContext(r.Context(), `SELECT pg_advisory_xact_lock(7001)`); err == nil {
+		err = tx.QueryRowContext(r.Context(), `SELECT role,active FROM users WHERE id=$1`, id).Scan(&role, &active)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, 404, map[string]string{"error": "Akun tidak ditemukan."})
+		return false
+	}
+	if err == nil && demote && role == "pengelola" && active {
+		err = tx.QueryRowContext(r.Context(), `SELECT count(*) FROM users WHERE role='pengelola' AND active=true`).Scan(&n)
+		if err == nil && n <= 1 {
+			writeJSON(w, 409, map[string]string{"error": "Minimal harus ada satu pengelola aktif."})
+			return false
+		}
+	}
+	if err == nil {
+		_, err = tx.ExecContext(r.Context(), update, append([]any{id}, extra...)...)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		s.fail(w, err)
+		return false
+	}
+	return true
 }
