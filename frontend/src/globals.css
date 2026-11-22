@@ -64,8 +64,131 @@ main.scan-main{max-width:none;padding:20px 24px 0}
 @media (max-width:900px){.scan-station.full .station-card{top:auto;left:14px;right:14px;bottom:14px;width:auto;height:38dvh}.scan-station.full .station-flash{right:18px;bottom:calc(38dvh + 28px)}.scan-station.full .station-modes{top:14px}.station-full{top:14px;right:14px;padding:0 12px}}
 @media (max-width:560px){.station-modes{top:68px}.scan-station.full .station-modes{top:68px}}
 
-.student-table th, .student-table td { white-space: nowrap; }
-.student-table .student-address { min-width: 14rem; max-width: 20rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.directory .section-head { padding-block: 8px; }
+.directory .tabs { gap: 6px; flex-wrap: wrap; }
+.directory .tabs button {
+  border-radius: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: #4e6458;
+}
+.directory .tabs button.active { background: #e8f2ec; color: var(--dark); }
+.directory .tabs span { margin-left: 4px; }
+.directory .searchbox { min-width: 0; }
+.directory .searchbox input, .directory .filters select { font-size: 13px; min-height: 44px; }
+.directory .searchbox:focus-within { outline: 2px solid var(--green); outline-offset: 1px; }
+.directory .searchbox input:focus { outline: none; box-shadow: none; }
+.directory .searchbox svg { flex-shrink: 0; }
+.directory .filters select { max-width: 100%; }
+.directory .error-banner { margin-inline: 15px; }
+.directory-table-scroll:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+.directory-table th, .directory-table td { padding-inline: 8px; }
+.directory-table th:first-child, .directory-table td:first-child { padding-left: 18px; }
+.directory-table th:last-child, .directory-table td:last-child { padding-right: 18px; }
+.directory-table th { color: #53695e; font-size: 11px; white-space: normal; }
+.directory-table .directory-table-name { min-width: 8rem; max-width: 15rem; }
+.directory-table .directory-birth { min-width: 7rem; max-width: 13rem; }
+.directory-table .directory-group { min-width: 7rem; max-width: 15rem; }
+.directory-table .directory-address { min-width: 9rem; max-width: 17rem; }
+.directory-table td { color: #486156; overflow-wrap: anywhere; white-space: normal; }
+.directory-table .row-actions, .directory-table .mono { white-space: nowrap; }
+.directory-table .directory-qr span { display: none; }
+.student-table .row-actions {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 4px 8px;
+}
+.student-table .row-actions button:last-child { grid-column: 1 / -1; justify-self: start; }
+
+.directory-cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  background: #f5f8f4;
+  padding: 14px;
+  margin: 0;
+  list-style: none;
+}
+.directory-cards > li {
+  min-width: 0;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.directory-card-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+.directory-card-header .avatar { width: 36px; height: 36px; }
+.directory-card-header .badge { white-space: nowrap; }
+.directory-card-name { align-self: center; overflow-wrap: anywhere; }
+.directory-card-name h2 { color: var(--dark); font-size: 15px; line-height: 1.35; font-weight: 700; }
+.directory-card-name small { display: block; color: #526b5c; margin-top: 2px; font-size: 11px; }
+.directory-card-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  margin: 12px 0 0;
+}
+.directory-card-fields dt { color: #526b5c; font-size: 11px; }
+.directory-card-fields dd {
+  margin: 3px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.directory-card-fields .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+.directory-card-fields .directory-address { grid-column: 1 / -1; }
+.directory-profile { margin-top: 10px; border-top: 1px solid var(--line); }
+.directory-profile summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--green);
+  font-weight: 650;
+  font-size: 13px;
+  list-style: none;
+}
+.directory-profile summary::-webkit-details-marker { display: none; }
+.directory-profile .hide-profile, .directory-profile[open] .show-profile { display: none; }
+.directory-profile[open] .hide-profile { display: inline; }
+.directory-profile[open] summary svg { transform: rotate(180deg); }
+.directory-profile .directory-card-fields { margin: 0 0 12px; }
+.directory-cards .row-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.directory-card-fields + .row-actions { margin-top: 12px; }
+.directory-cards .row-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--green);
+  background: #f8faf7;
+  font-size: 12px;
+}
+.directory-cards .row-actions button:disabled { opacity: .55; }
+@media (width < 768px) {
+  .directory .filters select { flex: 1 1 100%; }
+  .directory .searchbox input, .directory .filters select { font-size: 16px; }
+}
+
 .student-form { width: 580px; }
 .student-form-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .student-form-fields input, .student-form-fields select { width: 100%; min-width: 0; }

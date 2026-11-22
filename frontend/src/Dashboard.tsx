@@ -6,7 +6,7 @@ import UserManagement from './UserManagement';
 import AttendanceManagement from './AttendanceManagement';
 import GateManualStatus from './GateManualStatus';
 import ScanStation from './ScanStation';
-import { Avatar, PeopleTable, PersonForm, initials, type StudentProfile, type StudentProfiles } from './PeopleDirectory';
+import { Avatar, PeopleDirectory, PersonForm, initials, type StudentProfile, type StudentProfiles } from './PeopleDirectory';
 import { roleLabel, type Person, type RecordItem } from './attendance';
 const nav=[['overview','Ringkasan',LayoutDashboard],['scan','Pindai absensi',ScanLine],['people','Murid & guru',Users],['cards','Kartu QR',QrCode],['reports','Rekap absensi',FileText],['settings','Pengaturan',Settings]] as const;
 const initial={people:[] as Person[],attendance:[] as RecordItem[],settings:{school:'Sekolah Kita',student_time:'07:00',teacher_time:'06:45',student_departure_time:'13:00',teacher_departure_time:'14:00',timezone:'Asia/Jakarta'},today:''};
@@ -45,15 +45,36 @@ export default function Dashboard({user,logout,logoutBusy,authError}:{user:Accou
  async function post(body:any,refresh=true){setBusy(true);try{const d:any=await apiJSON('/api/hadir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(refresh)await load();if(d.message)note(d.message);return d}catch(e:any){note(e.message||'Terjadi kesalahan.','error');return null}finally{setBusy(false)}}
  const active=data.people.filter(p=>p.active),todayRecords=data.attendance.filter(a=>a.day===data.today&&active.some(p=>p.id===a.person_id)),today=todayRecords.filter(a=>a.arrived),absences=todayRecords.filter(a=>!a.arrived),students=active.filter(p=>p.role==='murid'),teachers=active.filter(p=>p.role==='guru'),arrived=today.length,late=today.filter(a=>a.status==='Terlambat').length,unrecorded=Math.max(0,active.length-todayRecords.length),percent=active.length?Math.round(arrived/active.length*100):0;
  const dayCounts=data.attendance.filter(a=>a.arrived&&active.some(p=>p.id===a.person_id)).reduce((m:Record<string,number>,a)=>{m[a.day]=(m[a.day]||0)+1;return m},{});const maxDaily=Math.max(1,...Object.values(dayCounts));
- const filtered=data.people.filter(p=>(role==='all'||p.role===role)&&(group==='all'||p.group_name===group)&&`${p.name} ${p.number} ${p.group_name}${page === 'people' ? ' ' + (profiles?.[p.id]?.nisn || '') : ''}`.toLowerCase().includes(search.toLowerCase()));
+ const filtered=data.people.filter(p=>(role==='all'||p.role===role)&&(group==='all'||p.group_name===group)&&`${p.name} ${p.number} ${p.group_name}${page === 'people' ? ' ' + (profiles?.[p.id]?.nisn || '') : ''}`.toLowerCase().includes(search.trim().toLowerCase()));
  const time=(x?:string|null)=>x?new Intl.DateTimeFormat('id-ID',{timeZone:data.settings.timezone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(x)):'—';
  const dateLabel=new Intl.DateTimeFormat('id-ID',{timeZone:data.settings.timezone,weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(clock);
  const reportRows=reportFrom===reportTo?data.people.filter(p=>p.active||data.attendance.some(a=>a.person_id===p.id&&a.day===reportFrom)).map(p=>({p,a:data.attendance.find(a=>a.person_id===p.id&&a.day===reportFrom)})):data.attendance.filter(a=>a.day>=reportFrom&&a.day<=reportTo).map(a=>({p:data.people.find(p=>p.id===a.person_id)!,a}));
  const reports=reportRows.filter(({p,a})=>p&&(role==='all'||p.role===role)&&(group==='all'||p.group_name===group)&&(reportStatus==='all'||(a?.status||'Belum absen')===reportStatus)&&`${p.name} ${p.number}`.toLowerCase().includes(search.toLowerCase()));
  function csv(){const cell=(v:any)=>'"'+String(/^[=+@\-\t\r]/.test(String(v))?'\''+v:v??'').replaceAll('"','""')+'"';const rows=[['Tanggal','Nama','Nomor induk','Jenis','Kelas / bagian','Masuk','Pulang','Status','Terlambat (menit)','Keterangan','Sumber'],...reports.map(({p,a})=>[a?.day||reportFrom,p.name,p.number,roleLabel(p.role),p.group_name,a?.arrived?time(a.arrived):'',a?.departed?time(a.departed):'',a?.status||'Belum absen',a?.late_minutes||0,a?.note||'',({scan:'Pindai',manual:'Manual',correction:'Koreksi'} as Record<string,string>)[a?.source||'']||a?.source||''])];const url=URL.createObjectURL(new Blob(['\ufeff'+rows.map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`absensi-${reportFrom}-${reportTo}.csv`;link.click();URL.revokeObjectURL(url)}
  async function downloadQR(p:Person){const QRCode=(await import('qrcode')).default;const url=await QRCode.toDataURL('HADIR:'+p.token,{width:1000,margin:4,errorCorrectionLevel:'M'});const link=document.createElement('a');link.href=url;link.download='QR-'+p.number+'.png';link.click()}
- const searchLabel = page === 'people' ? 'Cari nama, NIS Lokal, NISN, atau NIP' : 'Cari nama atau nomor induk';
- const filters=<div className="filters"><div className="searchbox"><Search size={17}/><input aria-label={searchLabel} placeholder={searchLabel + '…'} value={search} onChange={e=>setSearch(e.target.value)}/></div><select aria-label="Jenis peserta" value={role} onChange={e=>setRole(e.target.value)}><option value="all">Semua jenis</option><option value="murid">Murid</option><option value="guru">Guru</option></select><select aria-label="Kelas atau bagian" value={group} onChange={e=>setGroup(e.target.value)}><option value="all">Semua kelas / bagian</option>{[...new Set(data.people.map(p=>p.group_name))].sort().map(g=><option key={g}>{g}</option>)}</select></div>;
+ const inDirectory = page === 'people';
+ const directoryRole = inDirectory ? role : 'all';
+ const searchLabel = directoryRole === 'murid' ? 'Cari nama, NIS Lokal, atau NISN'
+   : directoryRole === 'guru' ? 'Cari nama guru atau NIP'
+   : inDirectory ? 'Cari nama, NIS Lokal, NISN, atau NIP' : 'Cari nama atau nomor induk';
+ const groupLabel = directoryRole === 'murid' ? 'Kelas' : directoryRole === 'guru' ? 'Bagian' : 'Kelas atau bagian';
+ const groups = [...new Set(data.people
+   .filter(person => directoryRole === 'all' || person.role === directoryRole)
+   .map(person => person.group_name))].sort();
+ const filters = <div className="filters">
+   <div className="searchbox"><Search size={17} aria-hidden="true"/><input type="search" aria-label={searchLabel} placeholder={searchLabel + '…'} value={search} onChange={event => setSearch(event.target.value)}/></div>
+   {!inDirectory && <select aria-label="Jenis peserta" value={role} onChange={event => setRole(event.target.value)}>
+     <option value="all">Semua jenis</option><option value="murid">Murid</option><option value="guru">Guru</option>
+   </select>}
+   <select aria-label={groupLabel} value={group} onChange={event => setGroup(event.target.value)}>
+     <option value="all">{directoryRole === 'all' ? 'Semua kelas / bagian' : 'Semua ' + groupLabel.toLowerCase()}</option>
+     {groups.map(name => <option key={name}>{name}</option>)}
+   </select>
+ </div>;
+ function selectDirectoryRole(nextRole: string) {
+   setRole(nextRole);
+   setGroup('all');
+ }
  function empty(title:string,description:string,action?:()=>void,label='Tambah data'){return <div className="empty"><span><Users size={30}/></span><h3>{title}</h3><p>{description}</p>{action&&<button className="btn" onClick={action}><Plus size={16}/>{label}</button>}</div>}
  const currentTitle=nav.find(n=>n[0]===page)?.[1];
  const visibleNav=user.role==='petugas'?nav.filter(n=>n[0]==='scan'):nav;
@@ -75,15 +96,15 @@ export default function Dashboard({user,logout,logoutBusy,authError}:{user:Accou
  {page==='scan'&&<ScanStation onRecorded={load}/>}
  {page === 'people' && <section className="panel directory">
    <div className="section-head"><div className="tabs">
-     <button onClick={() => setRole('all')} className={role === 'all' ? 'active' : ''}>Semua <span>{data.people.length}</span></button>
-     <button onClick={() => setRole('murid')} className={role === 'murid' ? 'active' : ''}>Murid</button>
-     <button onClick={() => setRole('guru')} className={role === 'guru' ? 'active' : ''}>Guru</button>
-   </div><span className="muted">QR dibuat otomatis</span></div>
+     <button onClick={() => selectDirectoryRole('all')} aria-pressed={role === 'all'} className={role === 'all' ? 'active' : ''}>Semua <span>{data.people.length}</span></button>
+     <button onClick={() => selectDirectoryRole('murid')} aria-pressed={role === 'murid'} className={role === 'murid' ? 'active' : ''}>Murid</button>
+     <button onClick={() => selectDirectoryRole('guru')} aria-pressed={role === 'guru'} className={role === 'guru' ? 'active' : ''}>Guru</button>
+   </div></div>
    {filters}
    {profileError && <div className="error-banner" role="alert">{profileError}<button onClick={() => setProfileRevision(n => n + 1)}>Muat ulang biodata</button></div>}
    {role === 'murid' && !profiles
      ? (!profileError && <div className="loading" role="status">Memuat biodata murid…</div>)
-     : filtered.length ? <PeopleTable people={filtered} showProfiles={role === 'murid'} profiles={profiles} busy={busy}
+     : filtered.length ? <PeopleDirectory people={filtered} role={role} profiles={profiles} busy={busy}
        onCard={setCard} onEdit={setPersonModal} onToggle={p => {
          if (confirm((p.active ? 'Nonaktifkan' : 'Aktifkan') + ' ' + p.name + '?')) post({ action: 'active', id: p.id, active: !p.active });
        }}/>
