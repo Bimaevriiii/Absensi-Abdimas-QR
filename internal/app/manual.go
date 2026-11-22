@@ -29,13 +29,36 @@ func (s *Server) lookupNumberAction(w http.ResponseWriter, r *http.Request, b ac
 		writeJSON(w, 400, map[string]string{"error": "Masukkan nomor induk yang tepat."})
 		return
 	}
-	var id, name, role, group string
-	err := s.db.QueryRowContext(r.Context(), `SELECT id,name,role,group_name FROM people WHERE number=$1 AND active=true`, number).Scan(&id, &name, &role, &group)
-	if errors.Is(err, sql.ErrNoRows) {
+	if b.NumberType != "" && b.NumberType != "number" && b.NumberType != "nisn" {
+		writeJSON(w, 400, map[string]string{"error": "Jenis nomor tidak valid."})
+		return
+	}
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id, name, number, role, group_name FROM people
+		WHERE active=true AND (($2 <> 'nisn' AND number=$1)
+		OR ($2 <> 'number' AND role='murid' AND nisn <> '' AND nisn=$1)) LIMIT 2`, number, b.NumberType)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	defer rows.Close()
+	var id, name, localNumber, role, group string
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			s.fail(w, err)
+			return
+		}
 		writeJSON(w, 404, map[string]string{"error": "Nomor induk tidak ditemukan atau peserta nonaktif."})
 		return
 	}
-	if err != nil {
+	if err := rows.Scan(&id, &name, &localNumber, &role, &group); err != nil {
+		s.fail(w, err)
+		return
+	}
+	if rows.Next() {
+		writeJSON(w, 409, map[string]string{"code": "ambiguous_number", "error": "Nomor cocok dengan dua orang. Pilih NIS Lokal / NIP atau NISN."})
+		return
+	}
+	if err := rows.Err(); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -55,7 +78,7 @@ func (s *Server) lookupNumberAction(w http.ResponseWriter, r *http.Request, b ac
 		return
 	}
 	// Exact-number lookup returns only one identity and never exposes its QR token.
-	writeJSON(w, 200, map[string]any{"person": map[string]string{"id": id, "name": name, "number": number, "role": role, "group_name": group}, "record": record})
+	writeJSON(w, 200, map[string]any{"person": map[string]string{"id": id, "name": name, "number": localNumber, "role": role, "group_name": group}, "record": record})
 }
 
 func parsePresent(b actionBody, day, timezone, role string, cfg Settings, now time.Time) (*time.Time, *time.Time, string, int, error) {

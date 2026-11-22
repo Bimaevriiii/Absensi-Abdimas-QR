@@ -90,6 +90,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.hadir(w, r)
 			return
 		}
+	case "/api/students":
+		if r.Method == http.MethodGet {
+			s.studentsGet(w, r)
+			return
+		}
 	case "/api/audit":
 		if r.Method == http.MethodGet {
 			s.auditGet(w, r)

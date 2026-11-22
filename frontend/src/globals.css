@@ -63,3 +63,14 @@ main.scan-main{max-width:none;padding:20px 24px 0}
 .scan-station.full .station-flash{right:400px}
 @media (max-width:900px){.scan-station.full .station-card{top:auto;left:14px;right:14px;bottom:14px;width:auto;height:38dvh}.scan-station.full .station-flash{right:18px;bottom:calc(38dvh + 28px)}.scan-station.full .station-modes{top:14px}.station-full{top:14px;right:14px;padding:0 12px}}
 @media (max-width:560px){.station-modes{top:68px}.scan-station.full .station-modes{top:68px}}
+
+.student-table th, .student-table td { white-space: nowrap; }
+.student-table .student-address { min-width: 14rem; max-width: 20rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.student-form { width: 580px; }
+.student-form-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.student-form-fields input, .student-form-fields select { width: 100%; min-width: 0; }
+.student-address-field { grid-column: 1 / -1; }
+.student-address-field textarea { font: inherit; }
+@media (max-width: 440px) {
+  .student-form-fields { grid-template-columns: minmax(0, 1fr); }
+}

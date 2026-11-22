@@ -87,6 +87,8 @@ exit
 
 Login melalui browser, lalu uji dengan data sintetis: buat murid/guru, lihat kartu QR, catat masuk dan pulang, input status manual, koreksi sebagai pengelola, periksa audit, rekap, dan unduh CSV. Coba peran operator dan petugas untuk memastikan pembatasan menu dan API. Akun dapat dibuat pengelola dari panel aplikasi.
 
+Di **Murid & guru → Murid**, pengelola dan operator dapat mengisi biodata siswa. NIS Lokal, Nama Siswa, dan Kelas wajib. NISN, Jenis Kelamin, Kelas Paralel, Tempat dan Tanggal Lahir, NIK Siswa, serta Alamat Rumah dapat dilengkapi kemudian. Migrasi memakai nomor induk lama sebagai NIS Lokal dan mempertahankan kelas serta QR murid yang sudah terdaftar.
+
 ### Diagnostik dan menghentikan uji
 
 ```bash
@@ -156,12 +158,13 @@ Vite memakai proxy `/api` hanya saat development/preview. Build produksi memangg
 |---|---|
 | `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` | Sesi pengguna |
 | `GET /api/hadir` | Data peserta, absensi, pengaturan, dan tanggal sekolah sesuai peran |
+| `GET /api/students` | Daftar biodata murid dengan ID peserta, hanya pengelola dan operator |
 | `POST /api/hadir` | Aksi `person`, `active`, `lookup`, `lookupNumber`, `scan`, `settings`, `demo`, `clearDemo`, `manual`, atau `correct` |
 | `GET/POST /api/users` | Kelola akun, hanya pengelola |
 | `GET /api/audit` | Riwayat koreksi, hanya pengelola |
 | `GET /healthz`, `GET /readyz` | Status proses dan database |
 
-`lookupNumber` mencari nomor induk aktif secara tepat tanpa membocorkan token QR. `manual` menerima `person_id`, `day`, `status` (`Izin`/`Sakit`/`Alpa`), dan `reason` sepanjang 5–500 karakter; petugas hanya boleh mencatat hari ini. Pengelola juga dapat menambah kehadiran terlewat dengan `status: "Hadir"` dan waktu `arrived`. Aksi `correct` hanya untuk pengelola, mensyaratkan `reason` dan perubahan nyata, serta mencatat snapshot audit. `GET /api/audit?attendance_id=...` memfilter satu catatan. Jam pulang harus setelah masuk dan tidak boleh di masa depan. Tanggal mengikuti zona waktu sekolah.
+`lookupNumber` mencari peserta aktif berdasarkan NIS Lokal, NISN, atau NIP. Jika nomor cocok dengan dua peserta, API mengembalikan `409 ambiguous_number`. Ulangi pencarian dengan `number_type` bernilai `number` untuk NIS Lokal atau NIP, atau `nisn` untuk NISN. Aksi `person` mendukung objek opsional `student` dengan `nisn`, `gender`, `class_parallel`, `birth_place`, `birth_date`, `nik`, dan `home_address`. Tanggal lahir memakai format `YYYY-MM-DD`. Jika objek `student` tidak dikirim, biodata yang telah tersimpan dipertahankan. `manual` menerima `person_id`, `day`, `status` (`Izin`/`Sakit`/`Alpa`), dan `reason` sepanjang 5–500 karakter; petugas hanya boleh mencatat hari ini. Pengelola juga dapat menambah kehadiran terlewat dengan `status: "Hadir"` dan waktu `arrived`. Aksi `correct` hanya untuk pengelola, mensyaratkan `reason` dan perubahan nyata, serta mencatat snapshot audit. `GET /api/audit?attendance_id=...` memfilter satu catatan. Jam pulang harus setelah masuk dan tidak boleh di masa depan. Tanggal mengikuti zona waktu sekolah.
 
 Respons `401` berarti belum login, `403` berarti peran tidak berhak, `409` berarti konflik/duplikasi, dan `400` berarti input salah. API mengirim `Cache-Control: no-store`. Kata sandi di-hash dengan Argon2id; sesi menggunakan cookie `HttpOnly`, `SameSite=Strict`, dan `Secure` di produksi. POST dari `Origin` lain ditolak. Seluruh otorisasi diperiksa di API walaupun menu frontend juga dibatasi.
 

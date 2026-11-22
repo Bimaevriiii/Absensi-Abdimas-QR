@@ -8,28 +8,32 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Minimum time between masuk and pulang scans.
 const minPulangGap = 5 * time.Minute
 
 type actionBody struct {
-	Action   string `json:"action"`
-	ID       string `json:"id"`
-	PersonID string `json:"person_id"`
-	Name     string `json:"name"`
-	Number   string `json:"number"`
-	Role     string `json:"role"`
-	Group    string `json:"group"`
-	Active   *bool  `json:"active"`
-	Token    string `json:"token"`
-	Mode     string `json:"mode"`
-	Day      string `json:"day"`
-	Status   string `json:"status"`
-	Arrived  string `json:"arrived"`
-	Departed string `json:"departed"`
-	Note     string `json:"note"`
-	Reason   string `json:"reason"`
+	Action     string          `json:"action"`
+	ID         string          `json:"id"`
+	PersonID   string          `json:"person_id"`
+	Name       string          `json:"name"`
+	Number     string          `json:"number"`
+	NumberType string          `json:"number_type"`
+	Student    *studentProfile `json:"student"`
+	Role       string          `json:"role"`
+	Group      string          `json:"group"`
+	Active     *bool           `json:"active"`
+	Token      string          `json:"token"`
+	Mode       string          `json:"mode"`
+	Day        string          `json:"day"`
+	Status     string          `json:"status"`
+	Arrived    string          `json:"arrived"`
+	Departed   string          `json:"departed"`
+	Note       string          `json:"note"`
+	Reason     string          `json:"reason"`
 	Settings
 }
 
@@ -178,6 +182,19 @@ func (s *Server) personAction(w http.ResponseWriter, r *http.Request, b actionBo
 		writeJSON(w, 400, map[string]string{"error": "Lengkapi nama, nomor induk, jenis, dan kelas/bagian dengan benar."})
 		return
 	}
+	profile := studentProfile{}
+	if b.Student != nil {
+		if b.Role != "murid" {
+			writeJSON(w, 400, map[string]string{"error": "Biodata siswa hanya berlaku untuk murid."})
+			return
+		}
+		profile = *b.Student
+		if message := profile.normalize(); message != "" {
+			writeJSON(w, 400, map[string]string{"error": message})
+			return
+		}
+	}
+	// Keep identity and profile changes atomic. An omitted profile preserves existing data.
 	if b.ID == "" {
 		id, err := newID()
 		if err != nil {
@@ -189,25 +206,30 @@ func (s *Server) personAction(w http.ResponseWriter, r *http.Request, b actionBo
 			s.fail(w, err)
 			return
 		}
-		_, err = s.db.ExecContext(r.Context(), `INSERT INTO people(id,token,name,number,role,group_name) VALUES($1,$2,$3,$4,$5,$6)`, id, token, name, number, b.Role, group)
-		if uniqueViolation(err) {
-			writeJSON(w, 409, map[string]string{"error": "Nomor induk sudah terdaftar."})
-			return
-		}
+		_, err = s.db.ExecContext(r.Context(), `INSERT INTO people(id, token, name, number, role, group_name,
+			nisn, gender, class_parallel, birth_place, birth_date, nik, home_address)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,'')::date,$12,$13)`,
+			id, token, name, number, b.Role, group, profile.NISN, profile.Gender, profile.ClassParallel,
+			profile.BirthPlace, profile.BirthDate, profile.NIK, profile.HomeAddress)
 		if err != nil {
-			s.fail(w, err)
+			s.personWriteError(w, err)
 			return
 		}
 		writeJSON(w, 200, map[string]string{"message": "Data baru dan kartu QR berhasil dibuat."})
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `UPDATE people SET name=$1,number=$2,role=$3,group_name=$4 WHERE id=$5 AND demo=false`, name, number, b.Role, group, b.ID)
-	if uniqueViolation(err) {
-		writeJSON(w, 409, map[string]string{"error": "Nomor induk sudah terdaftar."})
-		return
-	}
+	res, err := s.db.ExecContext(r.Context(), `UPDATE people SET name=$1, number=$2, role=$3, group_name=$4,
+		nisn=CASE WHEN $6 THEN $7 ELSE nisn END,
+		gender=CASE WHEN $6 THEN $8 ELSE gender END,
+		class_parallel=CASE WHEN $6 THEN $9 ELSE class_parallel END,
+		birth_place=CASE WHEN $6 THEN $10 ELSE birth_place END,
+		birth_date=CASE WHEN $6 THEN NULLIF($11,'')::date ELSE birth_date END,
+		nik=CASE WHEN $6 THEN $12 ELSE nik END,
+		home_address=CASE WHEN $6 THEN $13 ELSE home_address END
+		WHERE id=$5 AND demo=false`, name, number, b.Role, group, b.ID, b.Student != nil, profile.NISN,
+		profile.Gender, profile.ClassParallel, profile.BirthPlace, profile.BirthDate, profile.NIK, profile.HomeAddress)
 	if err != nil {
-		s.fail(w, err)
+		s.personWriteError(w, err)
 		return
 	}
 	n, _ := res.RowsAffected()
@@ -221,6 +243,21 @@ func (s *Server) personAction(w http.ResponseWriter, r *http.Request, b actionBo
 		return
 	}
 	writeJSON(w, 200, map[string]string{"message": "Data berhasil diperbarui."})
+}
+
+func (s *Server) personWriteError(w http.ResponseWriter, err error) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		switch pgErr.ConstraintName {
+		case "people_student_nisn_idx":
+			writeJSON(w, 409, map[string]string{"error": "NISN sudah terdaftar."})
+			return
+		case "people_number_key":
+			writeJSON(w, 409, map[string]string{"error": "Nomor induk sudah terdaftar."})
+			return
+		}
+	}
+	s.fail(w, err)
 }
 
 func (s *Server) activeAction(w http.ResponseWriter, r *http.Request, b actionBody) {
