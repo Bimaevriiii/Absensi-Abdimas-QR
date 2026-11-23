@@ -21,32 +21,45 @@ type studentProfile struct {
 
 var decimalDigits = regexp.MustCompile(`^[0-9]+$`)
 
-func (p *studentProfile) normalize() string {
-	for _, value := range []*string{&p.NISN, &p.Gender, &p.ClassParallel, &p.BirthPlace, &p.BirthDate, &p.NIK, &p.HomeAddress} {
-		*value = strings.TrimSpace(*value)
-		if strings.ContainsRune(*value, 0) {
-			return "Biodata murid memuat karakter tidak valid."
+func (p *studentProfile) normalize() (column, message string) {
+	for _, field := range []struct {
+		column string
+		value  *string
+	}{
+		{"NISN", &p.NISN}, {"L/P", &p.Gender}, {"KELAS PARAREL", &p.ClassParallel},
+		{"TEMPAT/TANGGAL LAHIR", &p.BirthPlace}, {"TEMPAT/TANGGAL LAHIR", &p.BirthDate},
+		{"NIK SISWA", &p.NIK}, {"ALAMAT RUMAH", &p.HomeAddress},
+	} {
+		*field.value = strings.TrimSpace(*field.value)
+		if strings.ContainsRune(*field.value, 0) {
+			return field.column, "Biodata murid memuat karakter tidak valid."
 		}
 	}
 	if p.NISN != "" && (len(p.NISN) != 10 || !decimalDigits.MatchString(p.NISN)) {
-		return "NISN harus berisi tepat 10 digit."
+		return "NISN", "NISN harus berisi tepat 10 digit."
 	}
 	if p.NIK != "" && (len(p.NIK) != 16 || !decimalDigits.MatchString(p.NIK)) {
-		return "NIK siswa harus berisi tepat 16 digit."
+		return "NIK SISWA", "NIK siswa harus berisi tepat 16 digit."
 	}
 	if p.Gender != "" && p.Gender != "L" && p.Gender != "P" {
-		return "Jenis kelamin harus L atau P."
+		return "L/P", "Jenis kelamin harus L atau P."
 	}
 	if p.BirthDate != "" {
 		day, err := time.Parse(time.DateOnly, p.BirthDate)
 		if err != nil || day.Year() < 1 || day.Format(time.DateOnly) != p.BirthDate {
-			return "Tanggal lahir harus berupa tanggal yang valid."
+			return "TEMPAT/TANGGAL LAHIR", "Tanggal lahir harus berupa tanggal yang valid."
 		}
 	}
-	if utf8.RuneCountInString(p.ClassParallel) > 60 || utf8.RuneCountInString(p.BirthPlace) > 100 || utf8.RuneCountInString(p.HomeAddress) > 500 {
-		return "Kelas paralel, tempat lahir, atau alamat rumah terlalu panjang."
+	if utf8.RuneCountInString(p.ClassParallel) > 60 {
+		return "KELAS PARAREL", "Kelas paralel maksimal 60 karakter."
 	}
-	return ""
+	if utf8.RuneCountInString(p.BirthPlace) > 100 {
+		return "TEMPAT/TANGGAL LAHIR", "Tempat lahir maksimal 100 karakter."
+	}
+	if utf8.RuneCountInString(p.HomeAddress) > 500 {
+		return "ALAMAT RUMAH", "Alamat rumah maksimal 500 karakter."
+	}
+	return "", ""
 }
 
 func (s *Server) studentsGet(w http.ResponseWriter, r *http.Request) {

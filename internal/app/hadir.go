@@ -176,9 +176,47 @@ func (s *Server) hadirGet(w http.ResponseWriter, r *http.Request, actor User) {
 	writeJSON(w, 200, map[string]any{"people": people, "attendance": attendance, "settings": cfg, "today": day, "serverTime": s.now().UTC().Format(time.RFC3339Nano)})
 }
 
+func validatePersonIdentity(name, number, group string) (column, message string) {
+	for _, field := range []struct {
+		value, column string
+		maxBytes      int
+	}{
+		{name, "NAMA SISWA", 100}, {number, "NIS LOKAL", 40}, {group, "KLS", 60},
+	} {
+		if field.value == "" {
+			return field.column, "Kolom ini wajib diisi."
+		}
+		if len(field.value) > field.maxBytes || strings.ContainsRune(field.value, 0) {
+			return field.column, "Isi terlalu panjang atau mengandung karakter tidak valid."
+		}
+	}
+	return "", ""
+}
+
+type personInserter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertPerson(ctx context.Context, db personInserter, name, number, role, group string, profile studentProfile) error {
+	id, err := newID()
+	if err != nil {
+		return err
+	}
+	token, err := newID()
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO people(id, token, name, number, role, group_name,
+		nisn, gender, class_parallel, birth_place, birth_date, nik, home_address)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,'')::date,$12,$13)`,
+		id, token, name, number, role, group, profile.NISN, profile.Gender, profile.ClassParallel,
+		profile.BirthPlace, profile.BirthDate, profile.NIK, profile.HomeAddress)
+	return err
+}
+
 func (s *Server) personAction(w http.ResponseWriter, r *http.Request, b actionBody) {
 	name, number, group := strings.TrimSpace(b.Name), strings.TrimSpace(b.Number), strings.TrimSpace(b.Group)
-	if name == "" || len(name) > 100 || number == "" || len(number) > 40 || group == "" || len(group) > 60 || (b.Role != "murid" && b.Role != "guru") {
+	if _, message := validatePersonIdentity(name, number, group); message != "" || (b.Role != "murid" && b.Role != "guru") {
 		writeJSON(w, 400, map[string]string{"error": "Lengkapi nama, nomor induk, jenis, dan kelas/bagian dengan benar."})
 		return
 	}
@@ -189,29 +227,14 @@ func (s *Server) personAction(w http.ResponseWriter, r *http.Request, b actionBo
 			return
 		}
 		profile = *b.Student
-		if message := profile.normalize(); message != "" {
+		if _, message := profile.normalize(); message != "" {
 			writeJSON(w, 400, map[string]string{"error": message})
 			return
 		}
 	}
 	// Keep identity and profile changes atomic. An omitted profile preserves existing data.
 	if b.ID == "" {
-		id, err := newID()
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		token, err := newID()
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		_, err = s.db.ExecContext(r.Context(), `INSERT INTO people(id, token, name, number, role, group_name,
-			nisn, gender, class_parallel, birth_place, birth_date, nik, home_address)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,'')::date,$12,$13)`,
-			id, token, name, number, b.Role, group, profile.NISN, profile.Gender, profile.ClassParallel,
-			profile.BirthPlace, profile.BirthDate, profile.NIK, profile.HomeAddress)
-		if err != nil {
+		if err := insertPerson(r.Context(), s.db, name, number, b.Role, group, profile); err != nil {
 			s.personWriteError(w, err)
 			return
 		}

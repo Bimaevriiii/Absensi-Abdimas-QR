@@ -43,7 +43,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		if r.URL.Path != "/api/students/import" && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 			writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "Kirim data JSON."})
 			return
 		}
@@ -93,6 +93,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/students":
 		if r.Method == http.MethodGet {
 			s.studentsGet(w, r)
+			return
+		}
+	case "/api/students/import":
+		if r.Method == http.MethodPost {
+			s.importStudents(w, r)
+			return
+		}
+	case "/api/students/import/template":
+		if r.Method == http.MethodGet {
+			s.downloadStudentTemplate(w, r)
 			return
 		}
 	case "/api/audit":

@@ -89,6 +89,8 @@ Login melalui browser, lalu uji dengan data sintetis: buat murid/guru, lihat kar
 
 Di **Murid & guru → Murid**, pengelola dan operator dapat mengisi biodata siswa. NIS Lokal, Nama Siswa, dan Kelas wajib. NISN, Jenis Kelamin, Kelas Paralel, Tempat dan Tanggal Lahir, NIK Siswa, serta Alamat Rumah dapat dilengkapi kemudian. Migrasi memakai nomor induk lama sebagai NIS Lokal dan mempertahankan kelas serta QR murid yang sudah terdaftar.
 
+Untuk memasukkan banyak murid, pilih **Unduh contoh Excel**, isi sheet **Murid**, lalu pilih **Impor Excel** dan **Periksa file**. Gunakan format Teks untuk NIS Lokal, NISN, dan NIK. Isi tempat dan tanggal lahir dalam satu sel, misalnya `Bogor, 15 Januari 2012`. File `.xlsx` dapat memuat maksimal 1 MiB dan 5.000 baris data. Jika pemeriksaan menemukan kesalahan, perbaiki baris yang ditunjukkan sebelum menekan **Simpan murid baru**. Murid yang sudah terdaftar dilewati.
+
 ### Diagnostik dan menghentikan uji
 
 ```bash

@@ -6,6 +6,7 @@ import UserManagement from './UserManagement';
 import AttendanceManagement from './AttendanceManagement';
 import GateManualStatus from './GateManualStatus';
 import ScanStation from './ScanStation';
+import StudentImport from './StudentImport';
 import { Avatar, PeopleDirectory, PersonForm, initials, type StudentProfile, type StudentProfiles } from './PeopleDirectory';
 import { roleLabel, type Person, type RecordItem } from './attendance';
 const nav=[['overview','Ringkasan',LayoutDashboard],['scan','Pindai absensi',ScanLine],['people','Murid & guru',Users],['cards','Kartu QR',QrCode],['reports','Rekap absensi',FileText],['settings','Pengaturan',Settings]] as const;
@@ -100,6 +101,11 @@ export default function Dashboard({user,logout,logoutBusy,authError}:{user:Accou
      <button onClick={() => selectDirectoryRole('murid')} aria-pressed={role === 'murid'} className={role === 'murid' ? 'active' : ''}>Murid</button>
      <button onClick={() => selectDirectoryRole('guru')} aria-pressed={role === 'guru'} className={role === 'guru' ? 'active' : ''}>Guru</button>
    </div></div>
+   {role === 'murid' && user.role !== 'petugas' && <StudentImport disabled={busy} onImported={async () => {
+     setProfiles(null);
+     setProfileRevision(n => n + 1);
+     await load();
+   }}/>}
    {filters}
    {profileError && <div className="error-banner" role="alert">{profileError}<button onClick={() => setProfileRevision(n => n + 1)}>Muat ulang biodata</button></div>}
    {role === 'murid' && !profiles
